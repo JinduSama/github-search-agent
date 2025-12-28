@@ -36,6 +36,7 @@ class SearchParameters:
     sort_by: str = "stars"
     max_results: int = 5
     include_readme: bool = True
+    fallback_search: bool = True  # Try alternative searches if no results
 
 
 @dataclass
@@ -125,6 +126,72 @@ class GitHubSearchTool:
         
         return " ".join(query_parts)
     
+    def _generate_search_suggestions(self, params: SearchParameters) -> list[str]:
+        """Generate alternative search suggestions when no results found."""
+        suggestions = []
+        keywords = params.keywords.lower()
+        
+        # Common abbreviation expansions
+        abbreviations = {
+            "ml": "machine learning",
+            "ai": "artificial intelligence",
+            "dl": "deep learning",
+            "nlp": "natural language processing",
+            "cv": "computer vision",
+            "eda": "exploratory data analysis",
+            "etl": "extract transform load",
+            "api": "application programming interface",
+            "cli": "command line",
+            "gui": "graphical user interface",
+            "db": "database",
+            "auth": "authentication",
+            "auto": "automated OR automatic",
+        }
+        
+        # Check if any abbreviation is in the keywords
+        for abbr, expansion in abbreviations.items():
+            if abbr in keywords.split():
+                new_keywords = keywords.replace(abbr, expansion)
+                suggestions.append(f"Try expanding abbreviations: \"{new_keywords}\"")
+                break
+        
+        # Suggest lowering star requirements
+        if params.min_stars > 100:
+            suggestions.append(f"Try lowering min_stars from {params.min_stars} to {params.min_stars // 2} or 50")
+        
+        # Suggest removing language filter
+        if params.language:
+            suggestions.append(f"Try searching without the language filter (remove language: \"{params.language}\")")
+        
+        # Suggest using fewer keywords
+        keyword_list = params.keywords.split()
+        if len(keyword_list) > 2:
+            shorter = " ".join(keyword_list[:2])
+            suggestions.append(f"Try using fewer keywords: \"{shorter}\"")
+        
+        # Suggest topic-based search
+        if not params.topic:
+            topic_suggestions = {
+                "data analysis": "data-science",
+                "machine learning": "machine-learning",
+                "web framework": "web",
+                "automation": "automation",
+                "visualization": "data-visualization",
+                "api": "api",
+                "cli": "cli",
+                "testing": "testing",
+            }
+            for keyword, topic in topic_suggestions.items():
+                if keyword in keywords:
+                    suggestions.append(f"Try adding topic filter: topic:\"{topic}\"")
+                    break
+        
+        if not suggestions:
+            suggestions.append("Try using more general or alternative keywords")
+            suggestions.append("Check spelling and try common synonyms")
+        
+        return suggestions
+
     def search_repositories(self, params: SearchParameters) -> list[Repository]:
         """
         Search GitHub repositories based on parameters.
@@ -222,12 +289,13 @@ class GitHubSearchTool:
         
         return None
     
-    def format_output(self, repositories: list[Repository]) -> dict:
+    def format_output(self, repositories: list[Repository], params: Optional[SearchParameters] = None) -> dict:
         """
         Format repository list as JSON output.
         
         Args:
             repositories: List of Repository objects.
+            params: Optional search parameters for generating suggestions.
             
         Returns:
             Dictionary with formatted repository data.
@@ -251,11 +319,18 @@ class GitHubSearchTool:
                 "readme": repo.readme_content
             })
         
-        return {
+        output = {
             "success": True,
             "count": len(results),
             "repositories": results
         }
+        
+        # Add suggestions if no results found
+        if len(results) == 0 and params is not None:
+            output["suggestions"] = self._generate_search_suggestions(params)
+            output["message"] = "No repositories found matching your criteria. See suggestions for alternative searches."
+        
+        return output
     
     def close(self):
         """Close the HTTP client."""
@@ -290,7 +365,8 @@ def parse_parameters(json_str: str) -> SearchParameters:
         topic=data.get("topic"),
         sort_by=data.get("sort_by", "stars"),
         max_results=min(data.get("max_results", 5), 10),
-        include_readme=data.get("include_readme", True)
+        include_readme=data.get("include_readme", True),
+        fallback_search=data.get("fallback_search", True)
     )
 
 
@@ -323,6 +399,9 @@ Examples:
     if not args.parameters:
         if not sys.stdin.isatty():
             args.parameters = sys.stdin.read().strip()
+        elif os.path.exists("search_params.json"):
+            with open("search_params.json", "r") as f:
+                args.parameters = f.read().strip()
         else:
             parser.print_help()
             sys.exit(1)
@@ -335,7 +414,7 @@ Examples:
         tool = GitHubSearchTool()
         try:
             repositories = tool.search_repositories(params)
-            output = tool.format_output(repositories)
+            output = tool.format_output(repositories, params)
         finally:
             tool.close()
         

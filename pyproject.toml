@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.scripts]
-github-search = "scripts.github_search_tool:main"
+github-search = "github_search_agent.github_search_tool:main"
 
 [project.urls]
 Repository = "https://github.com/JinduSama/github-search-agent"
